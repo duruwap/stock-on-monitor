@@ -52,9 +52,8 @@ class WidgetTokens:
     background: QColor
     border: QColor
     hairline: QColor
-    text: QColor
-    text_secondary: QColor
-    text_tertiary: QColor
+    text: QColor          # 종목명·가격·라벨 모두 같은 색 (일관성)
+    text_dim: QColor      # 값이 없을 때(—, 불러오는 중)만
     up: QColor
     down: QColor
     warning: QColor
@@ -63,26 +62,24 @@ class WidgetTokens:
 def widget_tokens(dark: bool, color_scheme: str) -> WidgetTokens:
     if dark:
         base = dict(
-            background=QColor(24, 25, 28, 200),
-            border=QColor(255, 255, 255, 18),
-            hairline=QColor(255, 255, 255, 20),
-            text=QColor("#E4E6E9"),
-            text_secondary=QColor("#9398A0"),
-            text_tertiary=QColor("#63676E"),
+            background=QColor(22, 23, 26, 205),
+            border=QColor(255, 255, 255, 16),
+            hairline=QColor(255, 255, 255, 22),
+            text=QColor("#D5D8DC"),
+            text_dim=QColor("#6B7078"),
             warning=QColor("#C9A04A"),
         )
-        red, blue, green = QColor("#E07A72"), QColor("#79A3E0"), QColor("#6DBB94")
+        red, blue, green = QColor("#E2847C"), QColor("#82A9E2"), QColor("#76BF9A")
     else:
         base = dict(
-            background=QColor(250, 250, 251, 215),
-            border=QColor(0, 0, 0, 22),
+            background=QColor(250, 250, 251, 220),
+            border=QColor(0, 0, 0, 20),
             hairline=QColor(0, 0, 0, 18),
-            text=QColor("#1F2328"),
-            text_secondary=QColor("#6A7078"),
-            text_tertiary=QColor("#A0A5AC"),
+            text=QColor("#30343A"),
+            text_dim=QColor("#A3A8AE"),
             warning=QColor("#A87B1E"),
         )
-        red, blue, green = QColor("#C2473F"), QColor("#2F66B8"), QColor("#2E8A5E")
+        red, blue, green = QColor("#C0463E"), QColor("#2F66B8"), QColor("#2E8A5E")
 
     if color_scheme == "global":
         up, down = green, red

@@ -84,3 +84,15 @@ def test_portfolio_skips_invalid_and_duplicate_ids():
     ]})
     assert [h.symbol for h in p.holdings] == ["AAPL"]
     assert p.holdings[0].market == "US"
+
+
+def test_settings_v1_file_is_migrated(tmp_path):
+    paths = AppPaths(tmp_path, "test")
+    paths.settings_file.write_text(json.dumps({"schema_version": 1, "font_size": 11, "layout": "ticker",
+                                               "show_change_amt": True, "show_change_pct": False}),
+                                   encoding="utf-8")
+    repo = Repository(paths)
+    assert repo.settings.font_size == 11 and repo.settings.change_unit == "amount"
+    repo.save_settings()
+    saved = json.loads(paths.settings_file.read_text(encoding="utf-8"))
+    assert saved["schema_version"] == 2 and "layout" not in saved

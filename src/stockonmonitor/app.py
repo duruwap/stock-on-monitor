@@ -152,11 +152,6 @@ class Controller(QObject):
         self.act_visible.triggered.connect(self.set_widget_visible)
         self.act_mask = QAction("금액 숨기기", m, checkable=True)
         self.act_mask.triggered.connect(lambda on: self._update_setting(hide_amounts=on))
-        self.act_lock = QAction("위치 잠금", m, checkable=True)
-        self.act_lock.triggered.connect(lambda on: self._update_setting(locked=on))
-        act_refresh = QAction("지금 새로고침", m)
-        act_refresh.triggered.connect(self.quotes_refresh)
-
         act_portfolio = QAction("종목 관리…", m)
         act_portfolio.triggered.connect(self.open_portfolio)
         act_settings = QAction("설정…", m)
@@ -165,13 +160,11 @@ class Controller(QObject):
         self.act_update = QAction("", m)
         self.act_update.triggered.connect(self._install_update)
         self.act_update.setVisible(False)
-        act_about = QAction("정보", m)
-        act_about.triggered.connect(lambda: self.open_settings(page="about"))
         act_quit = QAction("종료", m)
         act_quit.triggered.connect(self.quit)
 
-        for a in (self.act_visible, self.act_mask, self.act_lock, act_refresh, None,
-                  act_portfolio, act_settings, None, self.act_update, act_about, None, act_quit):
+        for a in (self.act_visible, self.act_mask, None, act_portfolio, act_settings, None,
+                  self.act_update, act_quit):
             m.addSeparator() if a is None else m.addAction(a)
         m.aboutToShow.connect(self._sync_menu)
 
@@ -180,7 +173,6 @@ class Controller(QObject):
         hk = self.hotkey.current
         self.act_visible.setText(f"위젯 표시\t{hk}" if hk else "위젯 표시")
         self.act_mask.setChecked(self.settings.hide_amounts)
-        self.act_lock.setChecked(self.settings.locked)
 
     def _show_menu_at(self, pos: QPoint) -> None:
         self._sync_menu()
@@ -230,9 +222,6 @@ class Controller(QObject):
         self._persist_state()
 
     # ── 시세 ───────────────────────────────────────────────
-    def quotes_refresh(self) -> None:
-        self.quotes.refresh_now()
-
     def _on_snapshot(self, snap: Snapshot) -> None:
         self._snapshot = snap
         if snap.fx_usdkrw:

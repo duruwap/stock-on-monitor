@@ -1,7 +1,16 @@
 """바탕화면 플로팅 위젯.
 
-직접 그리기(QPainter) 방식이라 숫자 열이 정확히 오른쪽 정렬되고, 라벨 위젯 수십 개를
-만들고 지우는 비용이 없다.
+구성 (열은 고정):
+    종목명        현재가     전일 대비    평단 대비
+    ─────────────────────────────────────────────
+    투자원금   16,420,000
+    평가금액   18,236,196      +0.52%
+    평가손익   +1,816,196                 +11.06%
+
+디자인 규칙
+- 글자는 모두 같은 색·같은 굵기. 색이 달라지는 것은 변동 값(상승/하락)뿐이다.
+- 크기가 흔들리지 않는다: 열 폭은 '넓어지기만' 하고(숫자가 바뀌어도 줄지 않음),
+  종목·설정이 바뀔 때만 다시 계산한다. 행 수는 데이터 도착 전후로 같다.
 
 동작
 - 평소에는 설정한 불투명도로 옅게, 마우스를 올리면 선명하게
@@ -11,11 +20,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 from datetime import datetime
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QMouseEvent, QPainter, QPen
+from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import QToolTip, QWidget
 
 from stockonmonitor.core import formatting as fmt
@@ -26,14 +36,19 @@ from stockonmonitor.ui import theme
 
 SNAP_DISTANCE = 14
 SCREEN_MARGIN = 12
+NCOLS = 4                     # 종목명 · 현재가 · 전일 대비 · 평단 대비
+EMPTY_TEXT = "더블클릭해서 종목 추가"
+_DIGITS = re.compile(r"\d")
+
+LEFT = Qt.AlignmentFlag.AlignLeft
+RIGHT = Qt.AlignmentFlag.AlignRight
 
 
 @dataclass
 class Cell:
-    text: str
-    color: QColor
-    align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignRight
-    bold: bool = False
+    text: str = ""
+    color: QColor | None = None     # None이면 기본 글자색
+    align: Qt.AlignmentFlag = RIGHT
 
 
 @dataclass
@@ -41,16 +56,6 @@ class Row:
     cells: list[Cell]
     tooltip: str = ""
     is_summary: bool = False
-    indicator: QColor | None = None     # 행 오른쪽 끝 작은 점 (알림 조건 충족 등)
-
-
-@dataclass
-class _Layout:
-    widths: list[int] = field(default_factory=list)
-    row_h: int = 0
-    pad_x: int = 12
-    pad_y: int = 8
-    gap: int = 14
 
 
 class FloatingWidget(QWidget):
@@ -73,19 +78,16 @@ class FloatingWidget(QWidget):
         self._offline_reason: str | None = None
         self._fx: float | None = None
         self._rows: list[Row] = []
-        self._layout = _Layout()
-        self._ticker_index = 0
+        self._widths = [0] * NCOLS
+        self._structure: tuple = ()
         self._hovered = False
         self._drag_offset: QPoint | None = None
         self._dragged = False
-        self._has_data = False
 
         self._fade = QPropertyAnimation(self, b"windowOpacity", self)
         self._fade.setDuration(160)
         self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._leave_timer = QTimer(self, singleShot=True, interval=350, timeout=self._fade_out)
-
-        self._ticker_timer = QTimer(self, timeout=self._next_ticker)
 
         self._apply_window_flags()
         self.apply_settings(settings)
@@ -110,15 +112,7 @@ class FloatingWidget(QWidget):
                 self.show()
         self._tokens = theme.widget_tokens(theme.resolve_dark(settings.theme), settings.color_scheme)
         self._font = theme.ui_font(settings.font_size)
-        self._font_bold = theme.ui_font(settings.font_size, QFont.Weight.DemiBold)
         self._fm = QFontMetrics(self._font)
-        self._fm_bold = QFontMetrics(self._font_bold)
-
-        if settings.layout == "ticker" and len(self._positions) > 0:
-            self._ticker_timer.start(settings.ticker_seconds * 1000)
-        else:
-            self._ticker_timer.stop()
-
         if not self._hovered:
             self.setWindowOpacity(settings.idle_opacity / 100)
         self._apply_capture_exclusion()
@@ -136,108 +130,91 @@ class FloatingWidget(QWidget):
         self._fetched_at = fetched_at
         self._fx = fx
         self._offline_reason = offline_reason
-        self._has_data = fetched_at is not None
-        if self._settings.layout == "ticker" and positions and not self._ticker_timer.isActive():
-            self._ticker_timer.start(self._settings.ticker_seconds * 1000)
         self._rebuild()
 
-    def _next_ticker(self) -> None:
-        if self._hovered:  # 읽는 중에는 넘기지 않는다
-            return
-        count = len(self._rows)
-        if count > 1:
-            self._ticker_index = (self._ticker_index + 1) % count
-            self.update()
+    @property
+    def _has_holdings(self) -> bool:
+        return any(not p.holding.is_watch_only for p in self._positions)
 
     # ── 행 구성 ────────────────────────────────────────────
-    def _color_for(self, value: float | None) -> QColor:
-        t = self._tokens
+    def _change_color(self, value: float | None) -> QColor | None:
         if not value:
-            return t.text_secondary
-        return t.up if value > 0 else t.down
+            return None
+        return self._tokens.up if value > 0 else self._tokens.down
 
-    def _signed_pct(self, value: float | None) -> str:
+    def _pct(self, value: float | None) -> str:
+        if value is None:
+            return ""
         text = fmt.pct(value)
-        if self._settings.color_scheme == "mono" and value:
+        if self._settings.color_scheme == "mono" and abs(value) >= 0.005:
             return f"{fmt.arrow(value)}{text.lstrip('+-')}"
         return text
 
+    def _placeholder(self) -> Cell:
+        return Cell(fmt.DASH, self._tokens.text_dim)
+
     def _build_rows(self) -> list[Row]:
-        s, t = self._settings, self._tokens
-        masked = s.hide_amounts
+        s = self._settings
+        masked, by_amount = s.hide_amounts, s.change_unit == "amount"
         rows: list[Row] = []
 
         for p in self._positions:
             h, q = p.holding, p.quote
-            cells = [Cell(h.display_name, t.text_secondary, Qt.AlignmentFlag.AlignLeft)]
+            name = Cell(h.display_name, align=LEFT)
             if q is None:
-                cells.append(Cell(fmt.DASH if self._has_data else "···", t.text_tertiary))
-                cells += [Cell("", t.text_tertiary) for _ in range(self._extra_columns())]
-                rows.append(Row(cells, self._tooltip(p)))
+                rows.append(Row([name, self._placeholder(), Cell(), Cell()], self._tooltip(p)))
                 continue
+            day = (Cell(fmt.signed_price(q.change, h.currency), self._change_color(q.change)) if by_amount
+                   else Cell(self._pct(q.change_pct), self._change_color(q.change)))
+            if p.profit is None:
+                pl = Cell()
+            elif by_amount:
+                pl = Cell(fmt.signed_money(p.profit, h.currency, masked), self._change_color(p.profit))
+            else:
+                pl = Cell(self._pct(p.profit_pct), self._change_color(p.profit))
+            rows.append(Row([name, Cell(fmt.price(q.price, h.currency)), day, pl], self._tooltip(p)))
 
-            cells.append(Cell(fmt.price(q.price, h.currency), t.text, bold=True))
-            if s.show_change_amt:
-                cells.append(Cell(fmt.signed_price(q.change, h.currency), self._color_for(q.change)))
-            if s.show_change_pct:
-                cells.append(Cell(self._signed_pct(q.change_pct), self._color_for(q.change)))
-            if s.show_profit_amt:
-                cells.append(Cell(fmt.signed_money(p.profit, h.currency, masked) if p.profit is not None else "",
-                                  self._color_for(p.profit)))
-            if s.show_profit_pct:
-                cells.append(Cell(self._signed_pct(p.profit_pct) if p.profit_pct is not None else "",
-                                  self._color_for(p.profit_pct)))
-            if s.show_value:
-                cells.append(Cell(fmt.money(p.value, h.currency, masked) if p.value is not None else "",
-                                  t.text_secondary))
-            rows.append(Row(cells, self._tooltip(p)))
-
-        if s.show_summary and self._summary and not self._summary.is_empty:
-            rows.append(self._summary_row())
+        if s.show_summary and self._has_holdings:
+            rows.extend(self._summary_rows())
         return rows
 
-    def _extra_columns(self) -> int:
-        s = self._settings
-        return sum([s.show_change_amt, s.show_change_pct, s.show_profit_amt, s.show_profit_pct, s.show_value])
-
-    def _summary_row(self) -> Row:
-        """합계 행은 각 열의 의미에 맞춰 채운다: 가격 열 → 총 평가금액, 등락 열 → 오늘 변동, 손익 열 → 총 손익."""
-        s, t, sm = self._settings, self._tokens, self._summary
+    def _summary_rows(self) -> list[Row]:
+        s, sm = self._settings, self._summary
         masked = s.hide_amounts
-        day_color = self._color_for(sm.day_change_krw)
-        accent = self._color_for(sm.profit_krw)
-        cells = [Cell("합계", t.text_tertiary, Qt.AlignmentFlag.AlignLeft),
-                 Cell(fmt.krw_compact(sm.value_krw, masked), t.text, bold=True)]
-        if s.show_change_amt:
-            cells.append(Cell(fmt.signed_krw_compact(sm.day_change_krw, masked), day_color))
-        if s.show_change_pct:
-            cells.append(Cell(self._signed_pct(sm.day_change_pct), day_color))
-        if s.show_profit_amt:
-            cells.append(Cell(fmt.signed_krw_compact(sm.profit_krw, masked), accent,
-                              bold=not s.show_profit_pct))
-        if s.show_profit_pct:
-            cells.append(Cell(self._signed_pct(sm.profit_pct), accent, bold=True))
-        if s.show_value:
-            cells.append(Cell("", t.text_tertiary))
-        return Row(cells, self._summary_tooltip(), is_summary=True)
+        tip = self._summary_tooltip()
+        if sm is None or sm.is_empty:
+            return [Row([Cell(label, align=LEFT), self._placeholder(), Cell(), Cell()], tip, True)
+                    for label in ("투자원금", "평가금액", "평가손익")]
+
+        day_color = self._change_color(sm.day_change_krw)
+        pl_color = self._change_color(sm.profit_krw)
+        day = (fmt.signed_krw_compact(sm.day_change_krw, masked) if s.change_unit == "amount"
+               else self._pct(sm.day_change_pct))
+        return [
+            Row([Cell("투자원금", align=LEFT), Cell(fmt.krw_compact(sm.cost_krw, masked)), Cell(), Cell()],
+                tip, True),
+            Row([Cell("평가금액", align=LEFT), Cell(fmt.krw_compact(sm.value_krw, masked)),
+                 Cell(day, day_color), Cell()], tip, True),
+            Row([Cell("평가손익", align=LEFT), Cell(fmt.signed_krw_compact(sm.profit_krw, masked), pl_color),
+                 Cell(), Cell(self._pct(sm.profit_pct), pl_color)], tip, True),
+        ]
 
     # ── 툴팁 ───────────────────────────────────────────────
     def _tooltip(self, p: Position) -> str:
         h, q, masked = p.holding, p.quote, self._settings.hide_amounts
-        lines = [f"<b>{h.display_name}</b> <span style='color:gray'>{h.symbol} · {h.exchange or h.market}</span>"]
+        lines = [f"<b>{h.display_name}</b>&nbsp; <span style='color:gray'>{h.symbol} · {h.exchange or h.market}</span>"]
         if q:
-            lines.append(f"현재가 {fmt.price(q.price, h.currency)}  "
-                         f"({fmt.signed_price(q.change, h.currency)}, {fmt.pct(q.change_pct)})")
+            lines.append(f"현재가 {fmt.price(q.price, h.currency)}")
+            lines.append(f"전일 대비 {fmt.signed_price(q.change, h.currency)} ({fmt.pct(q.change_pct)})")
         else:
             lines.append("시세를 불러오지 못했습니다")
-        if not h.is_watch_only:
-            lines.append(f"평균단가 {fmt.price(h.avg_price, h.currency)} · 수량 "
-                         f"{fmt.MASK if masked else f'{h.quantity:,.10g}'}")
-            if p.profit is not None:
-                lines.append(f"평가손익 {fmt.signed_money(p.profit, h.currency, masked)} ({fmt.pct(p.profit_pct)})")
-                lines.append(f"평가금액 {fmt.money(p.value, h.currency, masked)}")
+        if h.is_watch_only:
+            lines.append("<span style='color:gray'>관심 종목</span>")
         else:
-            lines.append("관심 종목")
+            qty = fmt.MASK if masked else f"{h.quantity:,.10g}"
+            lines.append(f"평단가 {fmt.price(h.avg_price, h.currency)} · {qty}주")
+            if p.profit is not None:
+                lines.append(f"평단 대비 {fmt.signed_money(p.profit, h.currency, masked)} ({fmt.pct(p.profit_pct)})")
         targets = []
         if h.target_high:
             targets.append(f"↑ {fmt.price(h.target_high, h.currency)}")
@@ -249,9 +226,11 @@ class FloatingWidget(QWidget):
 
     def _summary_tooltip(self) -> str:
         sm, masked = self._summary, self._settings.hide_amounts
+        if sm is None or sm.is_empty:
+            return "합계 (원화 환산)"
         lines = ["<b>합계 (원화 환산)</b>",
+                 f"투자원금 {fmt.money(sm.cost_krw, masked=masked)}",
                  f"평가금액 {fmt.money(sm.value_krw, masked=masked)}",
-                 f"매입금액 {fmt.money(sm.cost_krw, masked=masked)}",
                  f"평가손익 {fmt.signed_money(sm.profit_krw, masked=masked)} ({fmt.pct(sm.profit_pct)})",
                  f"오늘 변동 {fmt.signed_money(sm.day_change_krw, masked=masked)} ({fmt.pct(sm.day_change_pct)})"]
         if self._fx:
@@ -263,55 +242,59 @@ class FloatingWidget(QWidget):
     def _status_tooltip(self) -> str:
         parts = []
         if self._offline_reason:
-            parts.append(f"연결 문제: {self._offline_reason}")
+            parts.append("시세 서버에 연결하지 못해 마지막 값을 표시 중입니다")
         if self._fetched_at:
             parts.append(f"마지막 갱신 {self._fetched_at:%H:%M:%S}")
         return "<br>".join(parts)
 
     # ── 레이아웃 ───────────────────────────────────────────
+    def _metrics(self) -> tuple[int, int, int, int, int]:
+        """(행 높이, 좌우 여백, 위아래 여백, 열 간격, 합계 구분 간격)"""
+        h = self._fm.height()
+        return int(h * 1.6), max(12, int(h * 0.9)), max(7, int(h * 0.45)), max(12, int(h * 1.1)), max(6, h // 2)
+
+    def _measure(self, text: str) -> int:
+        # 숫자는 모두 '0' 폭으로 계산 → 값이 바뀌어도 폭이 흔들리지 않음
+        return self._fm.horizontalAdvance(_DIGITS.sub("0", text)) + 1
+
+    def _minimum_widths(self) -> list[int]:
+        s = self._settings
+        has_usd = any(p.holding.currency == "USD" for p in self._positions)
+        price_sample = "$0,000.00" if has_usd else "000,000"
+        change_sample = "+0,000,000" if s.change_unit == "amount" else "+00.00%"
+        widths = [self._measure("가나다라"), self._measure(price_sample),
+                  self._measure(change_sample), self._measure(change_sample)]
+        if s.show_summary and self._has_holdings:
+            widths[1] = max(widths[1], self._measure("00,000,000"))
+        return widths
+
     def _rebuild(self) -> None:
         self._rows = self._build_rows()
-        if self._ticker_index >= len(self._rows):
-            self._ticker_index = 0
-        self._compute_layout()
+        s = self._settings
+        structure = (tuple(p.holding.key for p in self._positions), s.change_unit, s.hide_amounts,
+                     s.show_summary, s.font_size, s.color_scheme, self._has_holdings)
+        if structure != self._structure:
+            self._structure = structure
+            self._widths = self._minimum_widths()   # 구성이 바뀔 때만 폭을 새로 잡는다
+
+        max_name = self._fm.horizontalAdvance("가") * 7
+        for row in self._rows:
+            for i, cell in enumerate(row.cells):
+                w = self._measure(cell.text) if cell.text else 0
+                if i == 0:
+                    w = min(w + 2, max_name)
+                self._widths[i] = max(self._widths[i], w)   # 넓어지기만 한다
+        self._update_size()
         self.update()
 
-    def _text_width(self, cell: Cell) -> int:
-        return (self._fm_bold if cell.bold else self._fm).horizontalAdvance(cell.text)
-
-    def _compute_layout(self) -> None:
-        lay = self._layout
-        lay.row_h = int(self._fm.height() * 1.5)
-        lay.pad_x = max(10, int(self._fm.height() * 0.8))
-        lay.pad_y = max(6, int(self._fm.height() * 0.4))
-        lay.gap = max(10, int(self._fm.height() * 0.9))
-
+    def _update_size(self) -> None:
+        row_h, pad_x, pad_y, gap, sep = self._metrics()
         if not self._rows:
-            text = "종목을 추가하려면 더블클릭" if self._has_data or not self._positions else "불러오는 중…"
-            w = self._fm.horizontalAdvance(text) + lay.pad_x * 2
-            lay.widths = []
-            self._resize_anchored(w, lay.row_h + lay.pad_y * 2)
+            self._resize_anchored(self._fm.horizontalAdvance(EMPTY_TEXT) + pad_x * 2, row_h + pad_y * 2)
             return
-
-        ncols = max(len(r.cells) for r in self._rows)
-        widths = [0] * ncols
-        max_name = self._fm.horizontalAdvance("가") * 7  # 한글 7자
-        for r in self._rows:
-            for i, c in enumerate(r.cells):
-                w = self._text_width(c)
-                if i == 0:
-                    w = min(w + 2, max_name)  # +2: 글꼴 대체 시 소수점 폭 반올림 여유
-                widths[i] = max(widths[i], w)
-        lay.widths = widths
-
-        content_w = sum(widths) + lay.gap * (ncols - 1)
-        width = content_w + lay.pad_x * 2
-        if self._settings.layout == "ticker":
-            height = lay.row_h + lay.pad_y * 2
-        else:
-            n = len(self._rows)
-            has_summary = self._rows[-1].is_summary
-            height = n * lay.row_h + lay.pad_y * 2 + (4 if has_summary else 0)
+        width = sum(self._widths) + gap * (NCOLS - 1) + pad_x * 2
+        n_summary = sum(r.is_summary for r in self._rows)
+        height = len(self._rows) * row_h + pad_y * 2 + (sep * 2 if n_summary else 0)
         self._resize_anchored(width, height)
 
     def _resize_anchored(self, w: int, h: int) -> None:
@@ -330,57 +313,54 @@ class FloatingWidget(QWidget):
         if self.isVisible():
             self.move(self._clamp(QPoint(x, y)))
 
+    def _row_top(self, index: int) -> int:
+        row_h, _, pad_y, _, sep = self._metrics()
+        first_summary = next((i for i, r in enumerate(self._rows) if r.is_summary), None)
+        extra = sep * 2 if first_summary is not None and index >= first_summary else 0
+        return pad_y + index * row_h + extra
+
     # ── 그리기 ─────────────────────────────────────────────
     def paintEvent(self, _event) -> None:  # noqa: N802
-        t, lay = self._tokens, self._layout
+        t = self._tokens
+        row_h, pad_x, _, gap, sep = self._metrics()
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        radius = min(10.0, lay.row_h * 0.45)
-        p.setPen(QPen(t.border, 1))
+        radius = min(10.0, row_h * 0.4)
         bg = QColor(t.background)
         if self._hovered:
             bg.setAlpha(min(255, bg.alpha() + 30))
+        p.setPen(QPen(t.border, 1))
         p.setBrush(bg)
         p.drawRoundedRect(rect, radius, radius)
+        p.setFont(self._font)
 
         if not self._rows:
-            p.setFont(self._font)
-            p.setPen(t.text_tertiary)
-            text = "종목을 추가하려면 더블클릭" if self._has_data or not self._positions else "불러오는 중…"
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, text)
-            self._paint_status(p)
-            p.end()
-            return
-
-        if self._settings.layout == "ticker":
-            self._paint_row(p, self._rows[self._ticker_index], lay.pad_y)
+            p.setPen(t.text_dim)
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, EMPTY_TEXT)
         else:
-            y = lay.pad_y
-            for row in self._rows:
-                if row.is_summary:
+            drew_rule = False
+            for i, row in enumerate(self._rows):
+                top = self._row_top(i)
+                if row.is_summary and not drew_rule:
+                    drew_rule = True
+                    y = top - sep
                     p.setPen(QPen(t.hairline, 1))
-                    p.drawLine(lay.pad_x, y + 2, self.width() - lay.pad_x, y + 2)
-                    y += 4
-                self._paint_row(p, row, y)
-                y += lay.row_h
+                    p.drawLine(pad_x, y, self.width() - pad_x, y)
+                x = pad_x
+                for c, cell in enumerate(row.cells):
+                    w = self._widths[c]
+                    if cell.text:
+                        text = cell.text
+                        if c == 0:
+                            text = self._fm.elidedText(text, Qt.TextElideMode.ElideRight, w)
+                        p.setPen(cell.color or t.text)
+                        p.drawText(QRect(x, top, w, row_h), cell.align | Qt.AlignmentFlag.AlignVCenter, text)
+                    x += w + gap
         self._paint_status(p)
         p.end()
-
-    def _paint_row(self, p: QPainter, row: Row, y: int) -> None:
-        lay = self._layout
-        x = lay.pad_x
-        for i, cell in enumerate(row.cells):
-            w = lay.widths[i] if i < len(lay.widths) else self._text_width(cell)
-            p.setFont(self._font_bold if cell.bold else self._font)
-            p.setPen(cell.color)
-            text = cell.text
-            if i == 0:
-                text = self._fm.elidedText(text, Qt.TextElideMode.ElideRight, w)
-            p.drawText(QRect(x, y, w, lay.row_h), cell.align | Qt.AlignmentFlag.AlignVCenter, text)
-            x += w + lay.gap
 
     def _paint_status(self, p: QPainter) -> None:
         """연결에 문제가 있을 때만 오른쪽 위에 작은 점을 표시 (평소에는 아무것도 없음)."""
@@ -425,23 +405,15 @@ class FloatingWidget(QWidget):
         return super().event(e)
 
     def _tooltip_at(self, pos: QPoint) -> str:
-        lay = self._layout
-        if self._offline_reason and pos.x() > self.width() - 18 and pos.y() < 18:
-            return self._status_tooltip()
         if not self._rows:
             return self._status_tooltip()
-        if self._settings.layout == "ticker":
-            row = self._rows[self._ticker_index]
-        else:
-            y = pos.y() - lay.pad_y
-            idx = y // lay.row_h if lay.row_h else -1
-            if self._rows[-1].is_summary and y >= (len(self._rows) - 1) * lay.row_h:
-                idx = len(self._rows) - 1
-            if not 0 <= idx < len(self._rows):
-                return ""
-            row = self._rows[idx]
-        extra = self._status_tooltip()
-        return row.tooltip + (f"<br><span style='color:gray'>{extra}</span>" if extra else "")
+        row_h = self._metrics()[0]
+        row = next((r for i, r in enumerate(self._rows)
+                    if self._row_top(i) <= pos.y() < self._row_top(i) + row_h), None)
+        status = self._status_tooltip()
+        if row is None:
+            return status
+        return row.tooltip + (f"<br><span style='color:gray'>{status}</span>" if status else "")
 
     # ── 마우스 ─────────────────────────────────────────────
     def mousePressEvent(self, e: QMouseEvent) -> None:  # noqa: N802
@@ -473,13 +445,6 @@ class FloatingWidget(QWidget):
 
     def contextMenuEvent(self, e) -> None:  # noqa: N802
         self.context_menu_requested.emit(e.globalPos())
-
-    def wheelEvent(self, e) -> None:  # noqa: N802
-        # 한 줄 모드에서는 휠로 종목을 넘겨 볼 수 있다
-        if self._settings.layout == "ticker" and self._rows:
-            step = -1 if e.angleDelta().y() > 0 else 1
-            self._ticker_index = (self._ticker_index + step) % len(self._rows)
-            self.update()
 
     # ── 위치 ───────────────────────────────────────────────
     def _screen_rect(self, point: QPoint | None = None) -> QRect | None:
@@ -514,8 +479,7 @@ class FloatingWidget(QWidget):
         return QPoint(x, y)
 
     def default_position(self) -> QPoint:
-        screen = QGuiApplication.primaryScreen()
-        area = screen.availableGeometry()
+        area = QGuiApplication.primaryScreen().availableGeometry()
         return QPoint(area.right() - self.width() - SCREEN_MARGIN - 8,
                       area.bottom() - self.height() - SCREEN_MARGIN - 8)
 

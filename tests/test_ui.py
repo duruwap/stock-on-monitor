@@ -13,12 +13,12 @@ def _data():
     return pos, summarize(pos, 1300)
 
 
-def test_widget_renders_all_layouts(qapp):
+def test_widget_renders_all_variants(qapp):
     from stockonmonitor.ui.widget import FloatingWidget
 
     pos, summ = _data()
-    for settings in (Settings(), Settings(layout="ticker"), Settings(hide_amounts=True, color_scheme="mono"),
-                     Settings(show_change_amt=True, show_profit_amt=True, show_value=True, theme="light")):
+    for settings in (Settings(), Settings(change_unit="amount"), Settings(hide_amounts=True, color_scheme="mono"),
+                     Settings(show_summary=False, theme="light")):
         w = FloatingWidget(settings)
         w.set_data(pos, summ, datetime.now(), 1300, None)
         img = w.grab()
@@ -26,12 +26,26 @@ def test_widget_renders_all_layouts(qapp):
         w.close()
 
 
+def test_widget_columns_and_summary(qapp):
+    from stockonmonitor.ui.widget import NCOLS, FloatingWidget
+
+    pos, summ = _data()
+    w = FloatingWidget(Settings())
+    w.set_data(pos, summ, datetime.now(), 1300, None)
+    assert all(len(r.cells) == NCOLS for r in w._rows)
+    labels = [r.cells[0].text for r in w._rows if r.is_summary]
+    assert labels == ["투자원금", "평가금액", "평가손익"]
+    first = w._rows[0].cells
+    assert [c.text for c in first] == ["삼성전자", "70,000", "+1.45%", "+16.67%"]
+    assert first[0].color is None and first[1].color is None  # 이름·가격은 같은 기본 색
+
+
 def test_widget_masks_amounts(qapp):
     from stockonmonitor.core.formatting import MASK
     from stockonmonitor.ui.widget import FloatingWidget
 
     pos, summ = _data()
-    w = FloatingWidget(Settings(hide_amounts=True, show_profit_amt=True))
+    w = FloatingWidget(Settings(hide_amounts=True, change_unit="amount"))
     w.set_data(pos, summ, datetime.now(), 1300, None)
     texts = [c.text for r in w._rows for c in r.cells]
     assert MASK in texts
@@ -39,14 +53,21 @@ def test_widget_masks_amounts(qapp):
     assert not any("100,000" in t for t in texts)
 
 
-def test_widget_summary_columns_align(qapp):
+def test_widget_size_does_not_jitter(qapp):
+    """시세가 바뀌어도(자릿수가 줄어도) 위젯 크기는 변하지 않아야 한다."""
     from stockonmonitor.ui.widget import FloatingWidget
 
-    pos, summ = _data()
-    w = FloatingWidget(Settings(show_change_amt=True, show_profit_amt=True, show_value=True))
-    w.set_data(pos, summ, datetime.now(), 1300, None)
-    lengths = {len(r.cells) for r in w._rows}
-    assert len(lengths) == 1  # 모든 행의 열 수가 같아야 정렬이 맞음
+    hs = [Holding("005930", "KR", "삼성전자", "KOSPI", 60000, 10)]
+    w = FloatingWidget(Settings())
+    w.set_data(build_positions(hs, {}), None, None, None, None)          # 불러오는 중
+    loading = w.size()
+    sizes = set()
+    for price in (99999, 101000, 71111, 9990, 100000):
+        pos = build_positions(hs, {"KR:005930": Quote("005930", "KR", price, 70000)})
+        w.set_data(pos, summarize(pos, None), datetime.now(), None, None)
+        sizes.add((w.width(), w.height()))
+    assert len(sizes) == 1
+    assert loading.height() == w.height()   # 데이터 도착 전후 행 수 동일
 
 
 def test_portfolio_dialog_add_and_save(qapp):
@@ -77,6 +98,6 @@ def test_settings_dialog_collects(qapp):
                          on_open_folder=lambda p: None, on_check_update=None)
     dlg.applied.connect(lambda s, a: got.append(s))
     dlg.chk_hide_amounts.setChecked(True)
-    dlg.cmb_layout.setCurrentIndex(dlg.cmb_layout.findData("ticker"))
+    dlg.cmb_unit.setCurrentIndex(dlg.cmb_unit.findData("amount"))
     dlg._save()
-    assert got[0].hide_amounts and got[0].layout == "ticker" and got[0].hotkey == "Ctrl+Alt+H"
+    assert got[0].hide_amounts and got[0].change_unit == "amount" and got[0].hotkey == "Ctrl+Alt+H"
