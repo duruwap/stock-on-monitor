@@ -1,0 +1,23 @@
+[project]
+name = "stockonmonitor"
+dynamic = ["version"]
+description = "작업 표시줄에 상주하는 사무실 친화적 주식 시세 위젯 (Windows)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "B", "UP", "I"]
+ignore = [
+    "UP017",  # datetime.UTC 별칭 — timezone.utc 가 더 널리 읽힘
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["stockonmonitor"]

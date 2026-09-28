@@ -1,0 +1,9 @@
+{
+  "query": "삼성",
+  "items": [
+    {"code": "005930", "name": "삼성전자", "typeCode": "KOSPI", "typeName": "코스피", "url": "/domestic/stock/005930/total", "reutersCode": "005930", "nationCode": "KOR", "nationName": "대한민국", "category": "stock"},
+    {"code": "005935", "name": "삼성전자우", "typeCode": "KOSPI", "typeName": "코스피", "reutersCode": "005935", "nationCode": "KOR", "category": "stock"},
+    {"code": "AAPL", "name": "애플", "typeCode": "NASDAQ", "typeName": "나스닥", "reutersCode": "AAPL.O", "nationCode": "USA", "category": "stock"},
+    {"code": "7203", "name": "도요타", "typeCode": "TSE", "reutersCode": "7203.T", "nationCode": "JPN", "category": "stock"}
+  ]
+}
