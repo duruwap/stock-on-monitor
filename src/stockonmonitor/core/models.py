@@ -45,8 +45,8 @@ def _choice(value: Any, options: tuple[str, ...], default: str) -> str:
 # 설정
 # ─────────────────────────────────────────────────────────────
 THEMES = ("system", "dark", "light")
-LAYOUTS = ("list", "ticker")
 COLOR_SCHEMES = ("kr", "global", "mono")   # 빨강↑파랑↓ / 초록↑빨강↓ / 무채색
+CHANGE_UNITS = ("pct", "amount")           # 변동을 비율(%) 또는 금액으로
 REFRESH_CHOICES = (5, 10, 30, 60)
 
 
@@ -58,21 +58,13 @@ class Settings:
     refresh_seconds: int = 10
     hotkey: str = "Ctrl+Alt+H"              # 위젯 숨기기/보이기. 빈 문자열이면 사용 안 함
 
-    # 표시
+    # 화면 — 위젯 열은 고정(종목명·현재가·전일 대비·평단 대비), 표시 방식만 고른다
     theme: str = "system"
-    layout: str = "list"
     font_size: int = 9
     idle_opacity: int = 70                  # 마우스를 올리지 않았을 때 불투명도(%)
     color_scheme: str = "kr"
-    show_change_pct: bool = True
-    show_change_amt: bool = False
-    show_profit_pct: bool = True
-    show_profit_amt: bool = False
-    show_value: bool = False
-    show_summary: bool = True
-    ticker_seconds: int = 5
-
-    # 개인정보·방해 금지
+    change_unit: str = "pct"
+    show_summary: bool = True               # 투자원금·평가금액·평가손익
     hide_amounts: bool = False              # 금액 대신 •••, 비율(%)만 표시
     hide_in_capture: bool = True            # 화면 공유·캡처에서 제외 (Windows 10 2004+)
     hide_when_fullscreen: bool = True       # 전체 화면·프레젠테이션 중 자동 숨김
@@ -91,23 +83,32 @@ class Settings:
         return s.normalized()
 
     def normalized(self) -> Settings:
-        for name in ("always_on_top", "locked", "show_change_pct", "show_change_amt", "show_profit_pct",
-                     "show_profit_amt", "show_value", "show_summary", "hide_amounts", "hide_in_capture",
+        for name in ("always_on_top", "locked", "show_summary", "hide_amounts", "hide_in_capture",
                      "hide_when_fullscreen", "notify_targets", "check_updates"):
             setattr(self, name, bool(getattr(self, name)))
         self.refresh_seconds = int(_num(self.refresh_seconds, 10, 5, 600))
         self.hotkey = str(self.hotkey or "").strip()
         self.theme = _choice(self.theme, THEMES, "system")
-        self.layout = _choice(self.layout, LAYOUTS, "list")
         self.font_size = int(_num(self.font_size, 9, 7, 16))
         self.idle_opacity = int(_num(self.idle_opacity, 70, 20, 100))
         self.color_scheme = _choice(self.color_scheme, COLOR_SCHEMES, "kr")
-        self.ticker_seconds = int(_num(self.ticker_seconds, 5, 2, 60))
+        self.change_unit = _choice(self.change_unit, CHANGE_UNITS, "pct")
         self.notify_move_pct = round(_num(self.notify_move_pct, 0.0, 0.0, 30.0), 1)
         return self
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def migrate_settings_v1(d: dict) -> dict:
+    """1 → 2: 표시 항목 체크박스 6개를 '변동 표시 방식' 하나로 통합."""
+    d = dict(d)
+    if d.get("show_change_amt") and not d.get("show_change_pct"):
+        d["change_unit"] = "amount"
+    for key in ("layout", "ticker_seconds", "show_change_pct", "show_change_amt", "show_profit_pct",
+                "show_profit_amt", "show_value"):
+        d.pop(key, None)
+    return d
 
 
 # ─────────────────────────────────────────────────────────────

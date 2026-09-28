@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QKeySequenceEdit,
     QLabel,
@@ -31,7 +30,7 @@ from stockonmonitor.core.models import REFRESH_CHOICES, Settings
 from stockonmonitor.platform import windows
 from stockonmonitor.ui.icons import draw_app_icon
 
-PAGES = ["일반", "표시", "개인정보", "알림", "정보"]
+PAGES = ["일반", "화면", "알림", "정보"]
 PAGE_ABOUT = PAGES.index("정보")
 
 OPEN_SOURCE = [
@@ -97,8 +96,7 @@ class SettingsDialog(QDialog):
             item.setSizeHint(QSize(0, 34))
             self.nav.addItem(item)
         self.stack = QStackedWidget()
-        for build in (self._page_general, self._page_display, self._page_privacy, self._page_alerts,
-                      self._page_about):
+        for build in (self._page_general, self._page_display, self._page_alerts, self._page_about):
             page_widget = QWidget()
             lay = QVBoxLayout(page_widget)
             lay.setContentsMargins(24, 20, 24, 12)
@@ -118,6 +116,7 @@ class SettingsDialog(QDialog):
 
         footer = QHBoxLayout()
         footer.setContentsMargins(16, 10, 16, 12)
+        footer.setSpacing(8)
         self.warning = QLabel()
         self.warning.setProperty("role", "warning")
         footer.addWidget(self.warning, 1)
@@ -180,7 +179,7 @@ class SettingsDialog(QDialog):
         form.setHorizontalSpacing(16)
         form.setVerticalSpacing(10)
         self.cmb_theme = _combo([("시스템 설정 따르기", "system"), ("어둡게", "dark"), ("밝게", "light")], s.theme)
-        self.cmb_layout = _combo([("목록", "list"), ("한 줄 (종목을 번갈아 표시)", "ticker")], s.layout)
+        self.cmb_unit = _combo([("비율 (%)", "pct"), ("금액", "amount")], s.change_unit)
         self.cmb_colors = _combo([("상승 빨강 · 하락 파랑", "kr"), ("상승 초록 · 하락 빨강", "global"),
                                   ("색 없이 ▲▼ 기호만", "mono")], s.color_scheme)
         self.cmb_font = _combo([(f"{v} pt" + (" (기본)" if v == 9 else ""), v) for v in range(7, 17)], s.font_size)
@@ -196,45 +195,29 @@ class SettingsDialog(QDialog):
         opacity_row.addWidget(self.lbl_opacity)
 
         form.addRow("테마", self.cmb_theme)
-        form.addRow("배치", self.cmb_layout)
+        form.addRow("변동 표시", self.cmb_unit)
         form.addRow("등락 색상", self.cmb_colors)
         form.addRow("글자 크기", self.cmb_font)
         form.addRow("평소 불투명도", opacity_row)
         lay.addLayout(form)
-        lay.addWidget(_muted("마우스를 올리면 잠시 선명하게 보입니다."))
+        lay.addWidget(_muted("위젯은 종목명 · 현재가 · 전일 대비 · 평단 대비 순으로 표시됩니다. "
+                             "마우스를 올리면 선명해지고, 행 위에 머무르면 자세한 정보가 나옵니다."))
 
-        lay.addWidget(_section("표시 항목"))
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(24)
-        self.chk_cols = {}
-        for i, (key, label) in enumerate([
-            ("show_change_pct", "오늘 등락률"), ("show_change_amt", "오늘 등락폭"),
-            ("show_profit_pct", "수익률"), ("show_profit_amt", "평가손익"),
-            ("show_value", "평가금액"), ("show_summary", "합계 행"),
-        ]):
-            c = QCheckBox(label)
-            c.setChecked(getattr(s, key))
-            self.chk_cols[key] = c
-            grid.addWidget(c, i // 2, i % 2)
-        lay.addLayout(grid)
+        self.chk_summary = QCheckBox("합계 표시 (투자원금 · 평가금액 · 평가손익)")
+        self.chk_summary.setChecked(s.show_summary)
+        lay.addWidget(self.chk_summary)
 
-    def _page_privacy(self, lay: QVBoxLayout) -> None:
-        s = self._settings
-        self.chk_hide_amounts = QCheckBox("금액 숨기기 (수익률 등 % 만 표시)")
+        lay.addWidget(_section("눈에 띄지 않게"))
+        self.chk_hide_amounts = QCheckBox("금액 숨기기 (••• 로 표시, 비율은 그대로)")
         self.chk_hide_amounts.setChecked(s.hide_amounts)
-        lay.addWidget(self.chk_hide_amounts)
-        lay.addWidget(_muted("평가금액·손익 금액이 ••• 로 표시되어 옆 사람에게 자산 규모가 드러나지 않습니다."))
-
-        self.chk_capture = QCheckBox("화면 공유·녹화·캡처 시 위젯 숨기기")
+        self.chk_capture = QCheckBox("화면 공유·녹화·캡처할 때 위젯 숨기기")
         self.chk_capture.setChecked(s.hide_in_capture)
-        lay.addWidget(self.chk_capture)
-        lay.addWidget(_muted("Teams·Zoom 화면 공유나 캡처 이미지에 위젯이 나타나지 않습니다. "
-                             "(Windows 10 2004 이상)"))
-
+        self.chk_capture.setToolTip("Teams·Zoom 화면 공유나 캡처 이미지에 위젯이 나타나지 않습니다. (Windows 10 2004 이상)")
         self.chk_fullscreen = QCheckBox("전체 화면·발표 중에는 자동으로 숨기기")
         self.chk_fullscreen.setChecked(s.hide_when_fullscreen)
-        lay.addWidget(self.chk_fullscreen)
-        lay.addWidget(_muted("PowerPoint 슬라이드 쇼, 전체 화면 동영상 등이 실행되는 동안 잠시 숨겨집니다."))
+        self.chk_fullscreen.setToolTip("PowerPoint 슬라이드 쇼, 전체 화면 동영상 등이 실행되는 동안 잠시 숨겨집니다.")
+        for w in (self.chk_hide_amounts, self.chk_capture, self.chk_fullscreen):
+            lay.addWidget(w)
 
     def _page_alerts(self, lay: QVBoxLayout) -> None:
         s = self._settings
@@ -329,7 +312,8 @@ class SettingsDialog(QDialog):
             refresh_seconds=int(self.cmb_refresh.currentData()),
             hotkey=self.key_edit.keySequence().toString(QKeySequence.SequenceFormat.PortableText),
             theme=self.cmb_theme.currentData(),
-            layout=self.cmb_layout.currentData(),
+            change_unit=self.cmb_unit.currentData(),
+            show_summary=self.chk_summary.isChecked(),
             color_scheme=self.cmb_colors.currentData(),
             font_size=int(self.cmb_font.currentData()),
             idle_opacity=self.sld_opacity.value(),
@@ -339,7 +323,6 @@ class SettingsDialog(QDialog):
             notify_targets=self.chk_targets.isChecked(),
             notify_move_pct=float(self.cmb_move.currentData()),
             check_updates=self.chk_updates.isChecked(),
-            **{k: c.isChecked() for k, c in self.chk_cols.items()},
         )
         return s.normalized()
 

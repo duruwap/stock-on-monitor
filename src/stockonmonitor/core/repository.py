@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 
-from stockonmonitor.core.models import AppState, Portfolio, Settings
+from stockonmonitor.core.models import AppState, Portfolio, Settings, migrate_settings_v1
 from stockonmonitor.core.storage import JsonDocument
 from stockonmonitor.paths import AppPaths
 
 log = logging.getLogger(__name__)
 
-SETTINGS_SCHEMA = 1
+SETTINGS_SCHEMA = 2
 PORTFOLIO_SCHEMA = 1
 STATE_SCHEMA = 1
 
@@ -20,7 +20,7 @@ class Repository:
         self.paths = paths
         paths.ensure()
         self._settings = JsonDocument(paths.settings_file, SETTINGS_SCHEMA, lambda: Settings().to_dict(),
-                                      backup_dir=paths.backup_dir)
+                                      backup_dir=paths.backup_dir, migrations={1: migrate_settings_v1})
         self._portfolio = JsonDocument(paths.portfolio_file, PORTFOLIO_SCHEMA, lambda: Portfolio().to_dict(),
                                        backup_dir=paths.backup_dir, keep_backups=30)
         # 상태 파일은 잃어도 치명적이지 않으므로 백업하지 않는다

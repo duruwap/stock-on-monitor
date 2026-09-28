@@ -41,7 +41,7 @@ from stockonmonitor.providers.client import MarketDataClient
 log = logging.getLogger(__name__)
 
 COL_NAME, COL_CODE, COL_AVG, COL_QTY, COL_HIGH, COL_LOW, COL_SHOW = range(7)
-HEADERS = ["종목명", "코드", "평균단가", "수량", "알림 ↑", "알림 ↓", "표시"]
+HEADERS = ["종목명", "코드", "평단가", "수량", "알림 ↑", "알림 ↓", "표시"]
 NUMERIC_COLS = (COL_AVG, COL_QTY, COL_HIGH, COL_LOW)
 ROLE_ID = Qt.ItemDataRole.UserRole
 ROLE_CURRENCY = Qt.ItemDataRole.UserRole + 1
@@ -179,7 +179,7 @@ class PortfolioDialog(QDialog):
         self.table.itemSelectionChanged.connect(self._update_buttons)
         root.addWidget(self.table, 1)
 
-        hint = QLabel("수량을 비워 두면 관심 종목으로 표시됩니다.  알림 가격에 도달하면 한 번 알려 드립니다.")
+        hint = QLabel("수량을 비워 두면 관심 종목(손익 계산 제외)이 됩니다.  알림 ↑/↓ 가격에 닿으면 하루 한 번 알려 드립니다.")
         hint.setProperty("role", "muted")
         root.addWidget(hint)
 
@@ -202,6 +202,7 @@ class PortfolioDialog(QDialog):
         save.setAutoDefault(False)
         save.clicked.connect(self._save)
         buttons.addWidget(cancel)
+        buttons.addSpacing(2)
         buttons.addWidget(save)
         root.addLayout(buttons)
 
