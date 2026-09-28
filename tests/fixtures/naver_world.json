@@ -1,0 +1,15 @@
+{
+  "pollingInterval": 10000,
+  "datas": [
+    {
+      "reutersCode": "AAPL.O",
+      "symbolCode": "AAPL",
+      "stockName": "애플",
+      "closePrice": "228.12",
+      "compareToPreviousClosePrice": "1.72",
+      "compareToPreviousPrice": {"code": "2", "text": "상승", "name": "RISING"},
+      "fluctuationsRatio": "0.76",
+      "marketStatus": "CLOSE"
+    }
+  ]
+}

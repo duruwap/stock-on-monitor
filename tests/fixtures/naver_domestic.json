@@ -1,0 +1,33 @@
+{
+  "pollingInterval": 7000,
+  "datas": [
+    {
+      "itemCode": "005930",
+      "stockName": "삼성전자",
+      "closePrice": "71,200",
+      "compareToPreviousClosePrice": "700",
+      "compareToPreviousPrice": {"code": "2", "text": "상승", "name": "RISING"},
+      "fluctuationsRatio": "0.99",
+      "marketStatus": "OPEN"
+    },
+    {
+      "itemCode": "000660",
+      "stockName": "SK하이닉스",
+      "closePrice": "212,500",
+      "compareToPreviousClosePrice": "-1,500",
+      "compareToPreviousPrice": {"code": "5", "text": "하락", "name": "FALLING"},
+      "fluctuationsRatio": "-0.70",
+      "marketStatus": "OPEN"
+    },
+    {
+      "itemCode": "035720",
+      "stockName": "카카오",
+      "closePrice": "41,850",
+      "compareToPreviousClosePrice": "0",
+      "compareToPreviousPrice": {"code": "3", "text": "보합", "name": "EVEN"},
+      "fluctuationsRatio": "0.00",
+      "marketStatus": "CLOSE"
+    }
+  ],
+  "time": "20260928101500"
+}

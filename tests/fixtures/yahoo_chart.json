@@ -1,0 +1,25 @@
+{
+  "chart": {
+    "result": [
+      {
+        "meta": {
+          "currency": "USD",
+          "symbol": "AAPL",
+          "exchangeName": "NMS",
+          "regularMarketPrice": 228.12,
+          "chartPreviousClose": 226.4,
+          "previousClose": 226.4,
+          "shortName": "Apple Inc.",
+          "currentTradingPeriod": {
+            "pre": {"start": 1790000000, "end": 1790019800},
+            "regular": {"start": 1790019800, "end": 1790043200},
+            "post": {"start": 1790043200, "end": 1790057600}
+          }
+        },
+        "timestamp": [1790043200],
+        "indicators": {"quote": [{"close": [228.12]}]}
+      }
+    ],
+    "error": null
+  }
+}
